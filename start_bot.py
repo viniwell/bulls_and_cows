@@ -1,10 +1,10 @@
 import random
-import shelve
 import string
 
 import telebot
 
-from config import BOT_TOKEN, DB_NAME
+from config import BOT_TOKEN
+from user import User, DEFAULT_USER_LEVEL, get_or_create_user, save_user, del_user
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -35,8 +35,8 @@ def start_game(message, level):
         guessed_number += digit
         digits.remove(digit)
     print(f'{guessed_number} for {message.from_user.username}')
-    with shelve.open(DB_NAME) as storage:
-        storage[str(message.from_user.id)] = (guessed_number, 0)
+    user=get_or_create_user(message.from_user.id)
+    user.reset(guessed_number)
     bot.reply_to(message, 'Гра "Бики та корови"\n'
         f'Я загадав {level}-значне число. Спробуй відгадати, {message.from_user.first_name}!')
 
@@ -51,26 +51,23 @@ def show_help(message):
 @bot.message_handler(content_types=['text'])
 def bot_answer(message):
     text = message.text
-    try:
-        with shelve.open(DB_NAME) as storage:
-            guessed_number, tries = storage[str(message.from_user.id)]
-        level = len(guessed_number)
-        if len(text) == level and text.isnumeric() and len(text) == len(set(text)):
-            bulls, cows = get_bulls_cows(text, guessed_number)
-            tries += 1
-            if bulls != level:
-                response = f'Бики: {bulls} | Корови: {cows} ({tries} спроба)'
-                with shelve.open(DB_NAME) as storage:
-                    storage[str(message.from_user.id)] = (guessed_number, tries)
+    user=get_or_create_user(message.from_user.id)
+    if user.number:
+        if len(text) == user.level and text.isnumeric() and len(text) == len(set(text)):
+            bulls, cows = get_bulls_cows(text, user.number)
+            user.tries += 1
+            if bulls != user.level:
+                response = f'Бики: {bulls} | Корови: {cows} ({user.tries} спроба)'
+                save_user(message.from_user.id, user)
             else:
-                response = f'Ти вгадав за {tries} спроб! Зіграємо ще?'
-                with shelve.open(DB_NAME) as storage:
-                    del storage[str(message.from_user.id)]
+                response = f'Ти вгадав за {user.tries} спроб! Зіграємо ще?'
+                user.reset()
+                save_user(message.from_user.id, user)
                 bot.send_message(message.from_user.id, response, reply_markup=get_restart_buttons())
                 return
         else:
-            response = f'Надішли мені {level}-значне число з різними цифрами!'
-    except KeyError:
+            response = f'Надішли мені {user.level}-значне число з різними цифрами!'
+    else:
         if text in ('3', '4', '5'):
             start_game(message, int(text))
             return
@@ -78,7 +75,7 @@ def bot_answer(message):
             select_level(message)
             return
         else:
-            response = 'Для запуска гри набери /start'
+            response = 'Для запуску гри набери /start'
     bot.send_message(message.from_user.id, response)
 
 def get_restart_buttons():
